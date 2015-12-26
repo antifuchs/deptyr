@@ -1,6 +1,9 @@
 /*
  * Copyright (C) 2015 by Andreas Fuchs <asf@boinkor.net>
  *
+ * Includes significant portions of source code from reptyr, Copyright
+ * (C) 2011 by Nelson Elhage
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
@@ -19,7 +22,6 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-
 #define DEPTYR_VERSION "0.0.1"
 
 #define __printf __attribute__((format(printf, 1, 2)))
