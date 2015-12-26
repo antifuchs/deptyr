@@ -1,4 +1,4 @@
-OBJS = deptyr.o unix_socket.c
+OBJS = deptyr.o unix_socket.o
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
