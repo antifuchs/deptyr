@@ -144,7 +144,7 @@ void do_proxy(int pty) {
 void usage(char *me) {
      fprintf(stderr, "Usage: %s -s socket CMD\n", me);
      fprintf(stderr, "       %s -S socket\n", me);
-     fprintf(stderr, "  -S Proxy input and output to the program\n");
+     fprintf(stderr, "  -H Act as the head: Proxy input and output to the program\n");
      fprintf(stderr, "  -s Connect to a running proxy and exec the program\n");
      fprintf(stderr, "\n");
 }
@@ -159,7 +159,7 @@ int main(int argc, char *argv[])
      int act_as_proxy=0;
      int socket;
 
-     while ((opt = getopt(argc, argv, "hs:S:V")) != -1) {
+     while ((opt = getopt(argc, argv, "hs:H:V")) != -1) {
           switch (opt) {
           case 'h':
                usage(argv[0]);
@@ -170,7 +170,7 @@ int main(int argc, char *argv[])
           case 's':
                socket = connect_server(optarg);
                break;
-          case 'S':
+          case 'H':
                socket = create_server(optarg);
                act_as_proxy = 1;
                break;
