@@ -1,4 +1,4 @@
-OBJS = deptyr.o
+OBJS = deptyr.o unix_socket.c
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
@@ -18,7 +18,7 @@ all: deptyr
 
 deptyr: $(OBJS)
 
-deptyr.o: deptyr.h
+deptyr.o: deptyr.h unix_socket.h
 
 clean:
 	rm -f $(OBJS) deptyr
