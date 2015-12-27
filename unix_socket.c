@@ -30,6 +30,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <strings.h>
+#include <fcntl.h>
 
 #include "deptyr.h"
 
@@ -70,6 +71,10 @@ int connect_server(char *socket_path) {
      if ((fd = socket(AF_LOCAL, SOCK_STREAM, 0)) < 0) {
           die("Failed to create client socket");
           return fd;
+     }
+     if (fcntl(fd, FD_CLOEXEC) < 0) {
+          die("Failed to set CLOEXEC on client socket");
+          return -1;
      }
 
      memset(&addr, 0, sizeof(addr));
