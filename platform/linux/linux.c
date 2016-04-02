@@ -25,11 +25,11 @@
 
 #ifdef __linux__
 
-#include "linux.h"
 #include "../platform.h"
-#include "../../reptyr.h"
-#include "../../ptrace.h"
 #include <stdint.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 /* Homebrew posix_openpt() */
 int get_pt() {
