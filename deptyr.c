@@ -40,6 +40,10 @@
 #include <signal.h>
 #include <sys/socket.h>
 
+#ifdef WITH_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
+
 #include "deptyr.h"
 #include "unix_socket.h"
 #include "platform/platform.h"
@@ -200,6 +204,11 @@ int main(int argc, char *argv[])
                break;
           case 'H':
                socket = create_server(optarg);
+               #ifdef WITH_SYSTEMD
+               sd_notifyf(0,
+                          "Listening on socket %s",
+                          optarg);
+               #endif
                act_as_proxy = 1;
                break;
           default:
