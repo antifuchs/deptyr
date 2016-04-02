@@ -206,8 +206,11 @@ int main(int argc, char *argv[])
                socket = create_server(optarg);
                #ifdef WITH_SYSTEMD
                sd_notifyf(0,
-                          "Listening on socket %s",
-                          optarg);
+                          "STATUS=Listening on socket %s\n"
+                          "MAINPID=%d\n"
+                          "READY=1\n",
+                          optarg,
+                          getpid());
                #endif
                act_as_proxy = 1;
                break;
