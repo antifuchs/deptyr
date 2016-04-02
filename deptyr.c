@@ -207,10 +207,10 @@ int main(int argc, char *argv[])
                #ifdef WITH_SYSTEMD
                sd_notifyf(0,
                           "STATUS=Listening on socket %s\n"
-                          "MAINPID=%d\n"
+                          "MAINPID=%lu\n"
                           "READY=1\n",
                           optarg,
-                          getpid());
+                          (unsigned long)getpid());
                #endif
                act_as_proxy = 1;
                break;
