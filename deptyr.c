@@ -22,6 +22,10 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#ifdef __linux__
+#define _XOPEN_SOURCE
+#endif
+
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/types.h>
