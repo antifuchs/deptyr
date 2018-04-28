@@ -11,7 +11,10 @@ use std::ffi::OsString;
 use std::io::{stderr, stdin, stdout};
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
+use std::time::Duration;
+use std::thread::sleep;
 
 use clap::{App, Arg, SubCommand};
 
@@ -24,6 +27,8 @@ use nix::fcntl::{open, OFlag};
 use nix::pty::{grantpt, posix_openpt, ptsname, unlockpt, Winsize};
 // use nix::sys::termios::{cfmakeraw, Termios};
 use nix::sys::stat::Mode;
+
+use sendfd::UnixSendFd;
 
 fn main() {
     let matches =
@@ -38,7 +43,9 @@ fn main() {
                 SubCommand::with_name("interact")
                     .about("Runs the 'head' TTY, displaying output and allowing interaction"),
             ])
-            .get_matches();
+        .get_matches();
+
+    let socket = matches.value_of("socket").unwrap();
 
     match matches.subcommand() {
         ("run", Some(run_m)) => {
@@ -47,7 +54,7 @@ fn main() {
                 .unwrap()
                 .map(|arg| arg.to_os_string())
                 .collect();
-            run(command).unwrap();
+            run(socket, command).unwrap();
         }
         ("interact", None) => {
             interact().unwrap();
@@ -109,7 +116,27 @@ fn resize_pty(fd: RawFd) -> Result<(), Error> {
     Ok(())
 }
 
-fn run(command: Vec<OsString>) -> Result<(), Error> {
+fn try_connect(socket_path: &str) -> UnixStream {
+    loop {
+        match UnixStream::connect(socket_path) {
+            Ok(socket) => {
+                return socket;
+            }
+            Err(e) => {
+                println!(
+                    "Could not connect to {}: {:?}. Retrying in 1s...",
+                    socket_path, e
+                );
+                sleep(Duration::from_secs(1));
+            }
+        }
+    }
+}
+
+fn run(socket_path: &str, command: Vec<OsString>) -> Result<(), Error> {
+    // Open the socket:
+    let socket = try_connect(socket_path);
+
     // Open the PTY:
     let controlling_fd = posix_openpt(OFlag::O_RDWR)?;
     grantpt(&controlling_fd)?;
@@ -130,7 +157,9 @@ fn run(command: Vec<OsString>) -> Result<(), Error> {
     dup2(newout, stderr().as_raw_fd())?;
     close(newout)?;
 
-    // TODO: Send controlling_fd through UNIX domain socket
+    // send pty through the socket
+    let pty_fd = controlling_fd.as_raw_fd();
+    socket.sendfd(pty_fd)?;
 
     // Run the command:
     close(controlling_fd.as_raw_fd())?;
