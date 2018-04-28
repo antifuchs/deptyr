@@ -8,10 +8,11 @@ extern crate sendfd;
 
 use std::ffi::CString;
 use std::ffi::OsString;
+use std::fs::remove_file;
 use std::io::{stderr, stdin, stdout};
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::time::Duration;
 use std::thread::sleep;
@@ -22,10 +23,15 @@ use failure::Error;
 
 use libc::{TIOCGWINSZ, TIOCSWINSZ};
 
-use nix::unistd::{close, execvp, getppid, setpgid, setsid, Pid, dup2};
+use nix::Error as NixError;
+use nix::errno::Errno;
+use nix::unistd::{close, execvp, getppid, read, setpgid, setsid, write, Pid, dup2};
 use nix::fcntl::{open, OFlag};
 use nix::pty::{grantpt, posix_openpt, ptsname, unlockpt, Winsize};
-// use nix::sys::termios::{cfmakeraw, Termios};
+use nix::sys::termios::{cfmakeraw, tcgetattr, tcsetattr, SetArg, Termios};
+use nix::sys::select::{pselect, FdSet};
+use nix::sys::signal::{sigaction, sigprocmask, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow,
+                       Signal};
 use nix::sys::stat::Mode;
 
 use sendfd::UnixSendFd;
@@ -56,8 +62,8 @@ fn main() {
                 .collect();
             run(socket, command).unwrap();
         }
-        ("interact", None) => {
-            interact().unwrap();
+        ("interact", _) => {
+            interact(socket).unwrap();
         }
         (command, _) => {
             panic!("Unexpected subcommand {:?}", command);
@@ -65,18 +71,147 @@ fn main() {
     }
 }
 
-fn interact() -> Result<(), Error> {
-    println!("Starting head for socket (TK)");
-    // TODO: Start UNIX domain socket server
+fn interact(socket_path: &str) -> Result<(), Error> {
+    let listener = UnixListener::bind(socket_path)?;
+    while let Ok((stream, _)) = listener.accept() {
+        let pty = stream.recvfd()?;
+        let rawmode = RawTermios::setup()?;
 
-    // TODO: Receive PTY
+        match interact_with_process(pty) {
+            Ok(()) => {
+                drop(stream);
+                rawmode.restore()?;
+            }
+            Err(e) => {
+                drop(stream);
+                rawmode.restore()?;
+                println!("Encountered error: {}", e);
+            }
+        }
+    }
 
-    // TODO: interact
+    remove_file(socket_path)?;
     Ok(())
 }
 
-ioctl!{bad write_ptr unsafe_tty_set_winsize with TIOCSWINSZ; Winsize}
-ioctl!{bad read unsafe_tty_get_winsize with TIOCGWINSZ; Winsize}
+struct RawTermios {
+    fd: RawFd,
+    saved: Termios,
+}
+
+impl RawTermios {
+    fn setup() -> Result<RawTermios, Error> {
+        let fd = stdin().as_raw_fd();
+        let termios = tcgetattr(fd)?;
+        let mut raw = termios.clone();
+
+        cfmakeraw(&mut raw);
+        tcsetattr(fd, SetArg::TCSANOW, &raw)?;
+        Ok(RawTermios {
+            fd: fd,
+            saved: termios,
+        })
+    }
+
+    fn restore(&self) -> Result<(), Error> {
+        loop {
+            match tcsetattr(self.fd, SetArg::TCSANOW, &self.saved) {
+                Ok(()) => {
+                    break;
+                }
+                Err(NixError::Sys(Errno::EINTR)) => {
+                    continue;
+                }
+                Err(e) => {
+                    return Err(e.into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+static mut WINCH_HAPPENED: bool = false;
+
+extern "C" fn handle_winch(_: libc::c_int) {
+    unsafe { WINCH_HAPPENED = true };
+}
+
+fn interact_with_process(pty: RawFd) -> Result<(), Error> {
+    let mut buffer = vec![0 as u8; 4096];
+    let mut normal_mask = SigSet::empty();
+    normal_mask.add(Signal::SIGWINCH);
+    let select_mask = SigSet::empty();
+
+    // block WINCH while pselect isn't running:
+    sigprocmask(SigmaskHow::SIG_BLOCK, Some(&normal_mask), None)?;
+
+    // handle WINCH when it's unblocked (in pselect):
+    let handler = SigAction::new(
+        SigHandler::Handler(handle_winch),
+        SaFlags::empty(),
+        normal_mask,
+    );
+    unsafe { sigaction(Signal::SIGWINCH, &handler)? };
+
+    let stdin_fd = stdin().as_raw_fd();
+    let stdout_fd = stdout().as_raw_fd();
+
+    resize_pty(pty)?;
+    loop {
+        if unsafe { WINCH_HAPPENED } {
+            unsafe { WINCH_HAPPENED = false };
+            resize_pty(pty)?;
+        }
+        let mut fd_set = FdSet::new();
+        fd_set.insert(stdin_fd);
+        fd_set.insert(pty);
+        match pselect(None, &mut fd_set, None, None, None, &select_mask) {
+            Ok(_) => {}
+            Err(NixError::Sys(Errno::EINTR)) => {
+                continue;
+            }
+            Err(e) => {
+                return Err(e.into());
+            }
+        }
+        if fd_set.contains(pty) {
+            if proxy_write(&mut buffer, pty, stdout_fd)? {
+                return Ok(());
+            }
+        }
+        if fd_set.contains(stdin_fd) {
+            if proxy_write(&mut buffer, stdin_fd, pty)? {
+                return Ok(());
+            }
+        }
+    }
+}
+
+fn proxy_write(buffer: &mut [u8], r: RawFd, w: RawFd) -> Result<bool, Error> {
+    let n_read = read(r, buffer)?;
+    if n_read == 0 {
+        return Ok(true);
+    }
+    let mut offset = 0;
+    while offset < n_read {
+        match write(w, &buffer[offset..n_read]) {
+            Ok(n_written) => {
+                offset += n_written;
+            }
+            Err(NixError::Sys(Errno::EINTR)) => {
+                continue;
+            }
+            Err(e) => {
+                return Err(e.into());
+            }
+        }
+    }
+    Ok(false)
+}
+
+ioctl_write_ptr_bad!{unsafe_tty_set_winsize, TIOCSWINSZ, Winsize}
+ioctl_read_bad!{unsafe_tty_get_winsize, TIOCGWINSZ, Winsize}
 
 fn default_winsize() -> Winsize {
     Winsize {
@@ -145,6 +280,7 @@ fn run(socket_path: &str, command: Vec<OsString>) -> Result<(), Error> {
     let client_fd = open(Path::new(&client_pathname), OFlag::O_RDWR, Mode::empty())?;
     tty_set_winsize(client_fd, default_winsize())?;
 
+    println!("Running: {:?}", command);
     // Make a new session & redirect IO to PTY
     setpgid(Pid::this(), getppid())?;
     setsid()?;
@@ -163,7 +299,6 @@ fn run(socket_path: &str, command: Vec<OsString>) -> Result<(), Error> {
 
     // Run the command:
     close(controlling_fd.as_raw_fd())?;
-    println!("Running: {:?}", command);
     let cstr_command: Vec<CString> = command
         .into_iter()
         .map(|arg| unsafe { CString::from_vec_unchecked(arg.into_vec()) })
