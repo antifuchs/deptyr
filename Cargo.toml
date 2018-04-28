@@ -1,0 +1,11 @@
+[package]
+name = "deptyr"
+version = "0.1.0"
+authors = ["Andreas Fuchs <asf@boinkor.net>"]
+
+[dependencies]
+nix = "0.10.0"
+clap = "2.31.2"
+failure = "0.1.1"
+failure_derive = "0.1.1"
+sendfd = "0.1.0"
