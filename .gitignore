@@ -1,2 +1,5 @@
 /deptyr
 *.o
+
+/target
+**/*.rs.bk
