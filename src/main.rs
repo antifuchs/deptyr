@@ -1,6 +1,9 @@
 extern crate clap;
+extern crate ctrlc;
 #[macro_use]
 extern crate failure;
+#[macro_use]
+extern crate failure_derive;
 extern crate libc;
 #[macro_use]
 extern crate nix;
@@ -21,6 +24,8 @@ use std::os::unix::ffi::OsStringExt;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use std::thread::sleep;
 
@@ -33,7 +38,7 @@ use nix::errno::Errno;
 use nix::unistd::{close, execvp, getppid, setpgid, setsid, Pid, dup2};
 use nix::fcntl::{open, OFlag};
 use nix::pty::{grantpt, posix_openpt, ptsname, unlockpt};
-use nix::sys::select::{pselect, FdSet};
+use nix::sys::select::{pselect, select, FdSet};
 use nix::sys::signal::{sigaction, sigprocmask, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow,
                        Signal};
 use nix::sys::stat::Mode;
@@ -93,25 +98,79 @@ pub(crate) trait InputSelectable {
     }
 }
 
-fn interact(socket_path: &str) -> Result<(), Error> {
-    let listener = UnixListener::bind(socket_path)?;
-    setup_sigwinch_handler()?;
+#[derive(Fail, Debug)]
+#[fail(display = "Aborted by user")]
+struct ListenAbort {}
 
-    while let Ok((stream, _)) = listener.accept() {
-        let pty = stream.recvfd()?;
+struct ListenSocket<'a> {
+    path: &'a str,
+    listener: UnixListener,
+}
 
-        match interact_with_process(pty) {
-            Ok(()) => {
-                drop(stream);
-            }
-            Err(e) => {
-                drop(stream);
-                println!("Encountered error: {}", e);
-            }
+impl<'a> Drop for ListenSocket<'a> {
+    fn drop(&mut self) {
+        drop(&self.listener);
+        if let Err(e) = remove_file(self.path) {
+            panic!("Couldn't remove socket path: {}", e);
         }
     }
+}
 
-    remove_file(socket_path)?;
+impl<'a> InputSelectable for ListenSocket<'a> {
+    fn input_fd(&self) -> RawFd {
+        self.listener.as_raw_fd()
+    }
+}
+
+impl<'a> ListenSocket<'a> {
+    fn listen(path: &'a str) -> Result<Self, Error> {
+        Ok(ListenSocket {
+            path: path,
+            listener: UnixListener::bind(path)?,
+        })
+    }
+
+    fn receive_pty(&self) -> Result<RawFd, Error> {
+        let mut fd_set = FdSet::new();
+        self.add_to_set(&mut fd_set);
+        match select(None, &mut fd_set, None, None, None) {
+            Ok(_) => {
+                let (stream, _) = self.listener.accept()?;
+                let pty = stream.recvfd()?;
+                drop(stream);
+                Ok(pty)
+            }
+            Err(NixError::Sys(Errno::EINTR)) => Err(ListenAbort {})?,
+            Err(e) => Err(e.into()),
+        }
+    }
+}
+
+fn interact(socket_path: &str) -> Result<(), Error> {
+    let should_exit = Arc::new(AtomicBool::new(false));
+    let r = should_exit.clone();
+    ctrlc::set_handler(move || {
+        r.store(true, Ordering::SeqCst);
+    }).expect("Error setting Ctrl-C handler");
+
+    setup_sigwinch_handler()?;
+    let listener = ListenSocket::listen(socket_path)?;
+
+    while !should_exit.load(Ordering::SeqCst) {
+        match listener.receive_pty() {
+            Ok(pty) => {
+                if let Err(e) = interact_with_process(pty) {
+                    println!("Encountered error: {}", e);
+                }
+            }
+            Err(e) => match e.downcast_ref::<ListenAbort>() {
+                Some(_) => {
+                    break;
+                }
+                _ => println!("Receiving PTY over UNIX domain socket: {}", e),
+            },
+        }
+    }
     Ok(())
 }
 
@@ -139,8 +198,8 @@ fn setup_sigwinch_handler() -> Result<(), Error> {
 
 fn interact_with_process(pty: RawFd) -> Result<(), Error> {
     let mut buffer = vec![0 as u8; 4096];
-    let mut pty = FdIo::from_fd(pty);
     let mut tty = TTY::default();
+    let mut pty = FdIo::from_fd(pty);
 
     tty.setup_raw()?;
     tty.resize_pty(pty)?;

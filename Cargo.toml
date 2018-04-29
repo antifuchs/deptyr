@@ -7,6 +7,8 @@ authors = ["Andreas Fuchs <asf@boinkor.net>"]
 nix = { git = "https://github.com/antifuchs/nix.git", branch = "pselect" }
 clap = "2.31.2"
 failure = "0.1.1"
+failure_derive = "0.1.1"
 sendfd = "0.1.0"
 libc = "0.2.40"
 owned-fd = "0.1.0"
+ctrlc = {version = "3.1.0", features = ["termination"]}
