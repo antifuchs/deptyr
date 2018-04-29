@@ -34,7 +34,7 @@ use failure::{Error, ResultExt};
 
 use nix::Error as NixError;
 use nix::errno::Errno;
-use nix::unistd::{close, execvp, getppid, setpgid, setsid, Pid, dup2};
+use nix::unistd::{close, execvp, setpgid, setsid, Pid, dup2};
 use nix::fcntl::{open, OFlag};
 use nix::pty::{grantpt, posix_openpt, unlockpt};
 use nix::sys::select::{pselect, FdSet};
@@ -197,17 +197,17 @@ where
 
 fn setup_pty(socket_path: &str) -> Result<(), Error> {
     // Open the PTY:
-    let controlling_fd = posix_openpt(OFlag::O_RDWR)?;
-    grantpt(&controlling_fd)?;
-    unlockpt(&controlling_fd)?;
-    let client_pathname = ptsname_r(&controlling_fd)?; // POSIX calls this the "slave", but no.
+    let controlling_fd = posix_openpt(OFlag::O_RDWR).context("posix_openpt")?;
+    grantpt(&controlling_fd).context("grantpt")?;
+    unlockpt(&controlling_fd).context("unlockpt")?;
+    let client_pathname = ptsname_r(&controlling_fd).context("ptsname")?; // POSIX calls this the "slave", but no.
 
     // Make a new session & redirect IO to PTY
-    setpgid(Pid::this(), getppid())?;
-    setsid()?;
+    setpgid(Pid::this(), Pid::parent()).context("setpgid")?;
+    setsid().context("setsid")?;
     let newstdin = open(Path::new(&client_pathname), OFlag::O_RDONLY, Mode::empty())?;
     dup2(newstdin, stdin().as_raw_fd())?;
-    tty::set_winsize(stdin().as_raw_fd(), tty::default_winsize())?;
+    tty::set_winsize(stdin().as_raw_fd(), tty::default_winsize()).context("initial setwinsize")?;
     close(newstdin)?;
 
     let newout = open(Path::new(&client_pathname), OFlag::O_WRONLY, Mode::empty())?;
@@ -229,6 +229,6 @@ fn run(socket_path: &str, command: Vec<OsString>) -> Result<(), Error> {
         .into_iter()
         .map(|arg| unsafe { CString::from_vec_unchecked(arg.into_vec()) })
         .collect();
-    try!(execvp(&cstr_command[0], &cstr_command));
+    try!(execvp(&cstr_command[0], &cstr_command).context(format!("executing {:?}", cstr_command)));
     bail!("continued after execvp - this should never be reached")
 }
