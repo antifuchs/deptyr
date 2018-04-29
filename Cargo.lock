@@ -33,7 +33,7 @@ name = "backtrace-sys"
 version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "cc 1.0.13 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cc 1.0.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.40 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -49,7 +49,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "cc"
-version = "1.0.13"
+version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -91,6 +91,7 @@ dependencies = [
  "failure_derive 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix 0.11.0-pre (git+https://github.com/nix-rust/nix.git?rev=1b80024f3a1a8188b98d458b8b332adb6fd7a038)",
+ "nix-ptsname_r-shim 0.1.2 (git+https://github.com/antifuchs/nix-ptsname_r-shim?branch=newer-nix)",
  "owned-fd 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sendfd 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -155,10 +156,18 @@ version = "0.11.0-pre"
 source = "git+https://github.com/nix-rust/nix.git?rev=1b80024f3a1a8188b98d458b8b332adb6fd7a038#1b80024f3a1a8188b98d458b8b332adb6fd7a038"
 dependencies = [
  "bitflags 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "cc 1.0.13 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cc 1.0.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "cfg-if 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.40 (git+https://github.com/rust-lang/libc)",
  "void 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "nix-ptsname_r-shim"
+version = "0.1.2"
+source = "git+https://github.com/antifuchs/nix-ptsname_r-shim?branch=newer-nix#ea21eefcd78c5330be5476d8edf9e655d57570e3"
+dependencies = [
+ "nix 0.11.0-pre (git+https://github.com/nix-rust/nix.git?rev=1b80024f3a1a8188b98d458b8b332adb6fd7a038)",
 ]
 
 [[package]]
@@ -306,7 +315,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum backtrace-sys 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)" = "44585761d6161b0f57afc49482ab6bd067e4edef48c12a152c237eb0203f7661"
 "checksum bitflags 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)" = "4efd02e230a02e18f92fc2735f44597385ed02ad8f831e7c1c1156ee5e1ab3a5"
 "checksum bitflags 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "1b2bf7093258c32e0825b635948de528a5949799dcd61bef39534c8aab95870c"
-"checksum cc 1.0.13 (registry+https://github.com/rust-lang/crates.io-index)" = "38fb45eeb2c9216a6700cf675b418d6c26ee15b55a3700970112da9fedfb8694"
+"checksum cc 1.0.14 (registry+https://github.com/rust-lang/crates.io-index)" = "6e9b718157695b866802180607488c861f3c640bf5c135544adf1be60a190418"
 "checksum cfg-if 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d4c819a1287eb618df47cc647173c5c4c66ba19d888a6e50d605672aed3140de"
 "checksum clap 2.31.2 (registry+https://github.com/rust-lang/crates.io-index)" = "f0f16b89cbb9ee36d87483dc939fe9f1e13c05898d56d7b230a0d4dff033a536"
 "checksum ctrlc 3.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "653abc99aa905f693d89df4797fadc08085baee379db92be9f2496cefe8a6f2c"
@@ -318,6 +327,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum libc 0.2.40 (registry+https://github.com/rust-lang/crates.io-index)" = "6fd41f331ac7c5b8ac259b8bf82c75c0fb2e469bbf37d2becbba9a6a2221965b"
 "checksum nix 0.11.0-pre (git+https://github.com/nix-rust/nix.git?rev=1b80024f3a1a8188b98d458b8b332adb6fd7a038)" = "<none>"
 "checksum nix 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)" = "a2c5afeb0198ec7be8569d666644b574345aad2e95a53baf3a532da3e0f3fb32"
+"checksum nix-ptsname_r-shim 0.1.2 (git+https://github.com/antifuchs/nix-ptsname_r-shim?branch=newer-nix)" = "<none>"
 "checksum owned-fd 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c90ca22499fa3634b6d50c16cd5d73f36f2a02052cc943cfaf4f645636c53ad2"
 "checksum quote 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)" = "7a6e920b65c65f10b2ae65c831a81a073a89edd28c7cce89475bff467ab4167a"
 "checksum redox_syscall 0.1.37 (registry+https://github.com/rust-lang/crates.io-index)" = "0d92eecebad22b767915e4d529f89f28ee96dbbf5a4810d2b844373f136417fd"

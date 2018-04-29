@@ -5,6 +5,7 @@ authors = ["Andreas Fuchs <asf@boinkor.net>"]
 
 [dependencies]
 nix = { git = "https://github.com/nix-rust/nix.git", rev = "1b80024f3a1a8188b98d458b8b332adb6fd7a038" }
+nix-ptsname_r-shim = {git = "https://github.com/antifuchs/nix-ptsname_r-shim", branch = "newer-nix"}
 clap = "2.31.2"
 failure = "0.1.1"
 failure_derive = "0.1.1"

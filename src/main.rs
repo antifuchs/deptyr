@@ -7,6 +7,7 @@ extern crate failure_derive;
 extern crate libc;
 #[macro_use]
 extern crate nix;
+extern crate nix_ptsname_r_shim;
 extern crate owned_fd;
 extern crate sendfd;
 
@@ -35,12 +36,13 @@ use nix::Error as NixError;
 use nix::errno::Errno;
 use nix::unistd::{close, execvp, getppid, setpgid, setsid, Pid, dup2};
 use nix::fcntl::{open, OFlag};
-use nix::pty::{grantpt, posix_openpt, ptsname, unlockpt};
+use nix::pty::{grantpt, posix_openpt, unlockpt};
 use nix::sys::select::{pselect, FdSet};
 use nix::sys::signal::{sigaction, sigprocmask, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow,
                        Signal};
 use nix::sys::stat::Mode;
 
+use nix_ptsname_r_shim::ptsname_r;
 
 use owned_fd::OwnedFd;
 
@@ -197,7 +199,7 @@ fn setup_pty(socket_path: &str) -> Result<(), Error> {
     let controlling_fd = posix_openpt(OFlag::O_RDWR)?;
     grantpt(&controlling_fd)?;
     unlockpt(&controlling_fd)?;
-    let client_pathname = unsafe { ptsname(&controlling_fd) }?; // POSIX calls this the "slave", but no.
+    let client_pathname = ptsname_r(&controlling_fd)?; // POSIX calls this the "slave", but no.
 
     // Make a new session & redirect IO to PTY
     setpgid(Pid::this(), getppid())?;
