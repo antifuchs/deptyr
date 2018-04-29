@@ -77,6 +77,8 @@ fn main() {
 
 fn interact(socket_path: &str) -> Result<(), Error> {
     let listener = UnixListener::bind(socket_path)?;
+    setup_sigwinch_handler()?;
+
     while let Ok((stream, _)) = listener.accept() {
         let pty = stream.recvfd()?;
 
@@ -103,21 +105,15 @@ pub(crate) trait Selectable {
     }
 }
 
-static mut WINCH_HAPPENED: bool = false;
+/// A no-op, only intended to properly interrupt pselect
+extern "C" fn handle_winch(_: libc::c_int) {}
 
-extern "C" fn handle_winch(_: libc::c_int) {
-    unsafe { WINCH_HAPPENED = true };
-}
-
-fn interact_with_process(pty: RawFd) -> Result<(), Error> {
-    let mut buffer = vec![0 as u8; 4096];
-    let mut pty = FdIo::from_fd(pty);
-    let mut tty = TTY::default();
-
+/// Sets up a no-op handler for SIGWINCH and blocks the signal in
+/// normal operation, so that `pselect` can get properly interrupted
+/// whenever a window change occurs.
+fn setup_sigwinch_handler() -> Result<(), Error> {
     let mut normal_mask = SigSet::empty();
     normal_mask.add(Signal::SIGWINCH);
-    let select_mask = SigSet::empty();
-
     // block WINCH while pselect isn't running:
     sigprocmask(SigmaskHow::SIG_BLOCK, Some(&normal_mask), None)?;
 
@@ -128,21 +124,26 @@ fn interact_with_process(pty: RawFd) -> Result<(), Error> {
         normal_mask,
     );
     unsafe { sigaction(Signal::SIGWINCH, &handler)? };
+    Ok(())
+}
+
+fn interact_with_process(pty: RawFd) -> Result<(), Error> {
+    let mut buffer = vec![0 as u8; 4096];
+    let mut pty = FdIo::from_fd(pty);
+    let mut tty = TTY::default();
 
     tty.setup_raw()?;
     tty.resize_pty(pty)?;
     loop {
-        if unsafe { WINCH_HAPPENED } {
-            unsafe { WINCH_HAPPENED = false };
-            // TODO: eliminate the unsafe signal handler by doing this in the EINTR branch below.
-            tty.resize_pty(pty)?;
-        }
+        let select_mask = SigSet::empty();
         let mut fd_set = FdSet::new();
         tty.add_to_set(&mut fd_set);
         pty.add_to_set(&mut fd_set);
         match pselect(None, &mut fd_set, None, None, None, &select_mask) {
             Ok(_) => {}
             Err(NixError::Sys(Errno::EINTR)) => {
+                // This is likely due to a SIGWINCH, so resize:
+                tty.resize_pty(pty)?;
                 continue;
             }
             Err(e) => {
