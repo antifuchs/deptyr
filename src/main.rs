@@ -12,22 +12,20 @@ extern crate sendfd;
 
 pub(crate) mod fd_io;
 mod tty;
+mod unix_socket;
 
 use fd_io::FdIo;
 use tty::TTY;
+use unix_socket::{send_control_pty, ListenError, ListenSocket};
 
 use std::ffi::CString;
 use std::ffi::OsString;
-use std::fs::remove_file;
 use std::io::{stderr, stdin, stdout, Read, Write};
 use std::os::unix::ffi::OsStringExt;
-use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
-use std::thread::sleep;
 
 use clap::{App, Arg, SubCommand};
 
@@ -38,14 +36,13 @@ use nix::errno::Errno;
 use nix::unistd::{close, execvp, getppid, setpgid, setsid, Pid, dup2};
 use nix::fcntl::{open, OFlag};
 use nix::pty::{grantpt, posix_openpt, ptsname, unlockpt};
-use nix::sys::select::{pselect, select, FdSet};
+use nix::sys::select::{pselect, FdSet};
 use nix::sys::signal::{sigaction, sigprocmask, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow,
                        Signal};
 use nix::sys::stat::Mode;
 
-use owned_fd::OwnedFd;
 
-use sendfd::UnixSendFd;
+use owned_fd::OwnedFd;
 
 fn main() {
     let matches =
@@ -100,67 +97,6 @@ pub(crate) trait InputSelectable {
     }
 }
 
-#[derive(Fail, Debug)]
-#[fail(display = "Aborted by user")]
-struct ListenAbort {}
-
-struct ListenSocket<'a> {
-    path: &'a str,
-    listener: UnixListener,
-}
-
-struct ReceivedFd(RawFd);
-
-impl IntoRawFd for ReceivedFd {
-    fn into_raw_fd(self) -> RawFd {
-        self.0
-    }
-}
-
-fn receive_fd(stream: &UnixStream) -> Result<ReceivedFd, Error> {
-    Ok(ReceivedFd(stream.recvfd()?))
-}
-
-impl<'a> Drop for ListenSocket<'a> {
-    fn drop(&mut self) {
-        drop(&self.listener);
-        if let Err(e) = remove_file(self.path) {
-            panic!("Couldn't remove socket path: {}", e);
-        }
-    }
-}
-
-impl<'a> InputSelectable for ListenSocket<'a> {
-    fn input_fd(&self) -> RawFd {
-        self.listener.as_raw_fd()
-    }
-}
-
-impl<'a> ListenSocket<'a> {
-    fn listen(path: &'a str) -> Result<Self, Error> {
-        Ok(ListenSocket {
-            path: path,
-            listener: UnixListener::bind(path)?,
-        })
-    }
-
-    fn receive_pty(&self) -> Result<OwnedFd, Error> {
-        let mut fd_set = FdSet::new();
-        self.add_to_set(&mut fd_set);
-        match select(None, &mut fd_set, None, None, None) {
-            Ok(_) => {
-                let (stream, _) = self.listener.accept()?;
-                let pty_fd = receive_fd(&stream)?;
-                drop(stream);
-                let owned = OwnedFd::from(pty_fd);
-                Ok(owned)
-            }
-            Err(NixError::Sys(Errno::EINTR)) => Err(ListenAbort {})?,
-            Err(e) => Err(e.into()),
-        }
-    }
-}
-
 fn interact(socket_path: &str) -> Result<(), Error> {
     let should_exit = Arc::new(AtomicBool::new(false));
     let r = should_exit.clone();
@@ -178,12 +114,8 @@ fn interact(socket_path: &str) -> Result<(), Error> {
                     println!("Encountered error: {}", e);
                 }
             }
-            Err(e) => match e.downcast_ref::<ListenAbort>() {
-                Some(_) => {
-                    break;
-                }
-                _ => println!("Receiving PTY over UNIX domain socket: {}", e),
-            },
+            Err(ListenError::Canceled) => break,
+            Err(e) => println!("Receiving PTY over UNIX domain socket: {}", e),
         }
     }
     Ok(())
@@ -260,41 +192,19 @@ where
     Ok(false)
 }
 
-fn try_connect(socket_path: &str) -> UnixStream {
-    loop {
-        match UnixStream::connect(socket_path) {
-            Ok(socket) => {
-                return socket;
-            }
-            Err(e) => {
-                println!(
-                    "Could not connect to {}: {:?}. Retrying in 1s...",
-                    socket_path, e
-                );
-                sleep(Duration::from_secs(1));
-            }
-        }
-    }
-}
-
-fn run(socket_path: &str, command: Vec<OsString>) -> Result<(), Error> {
-    // Open the socket:
-    let socket = try_connect(socket_path);
-
+fn setup_pty(socket_path: &str) -> Result<(), Error> {
     // Open the PTY:
     let controlling_fd = posix_openpt(OFlag::O_RDWR)?;
     grantpt(&controlling_fd)?;
     unlockpt(&controlling_fd)?;
     let client_pathname = unsafe { ptsname(&controlling_fd) }?; // POSIX calls this the "slave", but no.
-    let client_fd = open(Path::new(&client_pathname), OFlag::O_RDWR, Mode::empty())?;
-    tty::set_winsize(client_fd, tty::default_winsize())?;
 
-    println!("Running: {:?}", command);
     // Make a new session & redirect IO to PTY
     setpgid(Pid::this(), getppid())?;
     setsid()?;
     let newstdin = open(Path::new(&client_pathname), OFlag::O_RDONLY, Mode::empty())?;
     dup2(newstdin, stdin().as_raw_fd())?;
+    tty::set_winsize(stdin().as_raw_fd(), tty::default_winsize())?;
     close(newstdin)?;
 
     let newout = open(Path::new(&client_pathname), OFlag::O_WRONLY, Mode::empty())?;
@@ -302,12 +212,15 @@ fn run(socket_path: &str, command: Vec<OsString>) -> Result<(), Error> {
     dup2(newout, stderr().as_raw_fd())?;
     close(newout)?;
 
-    // send pty through the socket
-    let pty_fd = controlling_fd.as_raw_fd();
-    socket.sendfd(pty_fd)?;
+    // send controlling end of the pty through the socket:
+    send_control_pty(socket_path, controlling_fd)?;
+    Ok(())
+}
 
-    // Run the command:
-    close(controlling_fd.as_raw_fd())?;
+fn run(socket_path: &str, command: Vec<OsString>) -> Result<(), Error> {
+    println!("Running: {:?}", command);
+    setup_pty(socket_path)?;
+
     let cstr_command: Vec<CString> = command
         .into_iter()
         .map(|arg| unsafe { CString::from_vec_unchecked(arg.into_vec()) })
