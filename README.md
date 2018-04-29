@@ -6,10 +6,20 @@ program uses terminal graphics or other cute things that are great if
 you're running a thing interactively, but a complete pain if you want
 reasonable log files. Deptyr can help you!
 
-This tool has two modes: The first mode (`-s`) allocates a PTY,
+This tool has two modes: The first mode (`run`) allocates a PTY,
 redirects IO to that PTY and then execs a program, and the other mode
-(`-H` or "head") receives that PTY from a unix domain socket and proxies IO
-to/from the program.
+(`interact`) receives that PTY from a unix domain socket and proxies
+IO to/from the program.
+
+If you run daemontools or another service supervision tool, each of
+`run` and `interact` should be a separate service.
+
+# Installation
+
+`deptyr` is written in Rust, and should compile with all versions of
+Rust from 1.23.0 onwards. To build `deptyr`, clone this repo and run
+`cargo build --release` in the root. Once everything is done, you
+should see a binary in `target/release/deptyr`.
 
 # Example usage
 
@@ -21,13 +31,13 @@ To spawn the main program, add this `run` script under the rtorrent service:
 ``` sh
 #!/bin/sh
 
-exec deptyr -s /tmp/deptyr-rtorrent.socket rtorrent
+exec deptyr -s /tmp/deptyr-rtorrent.socket run -- rtorrent
 ```
 
 And to spawn the screen, add this to your `/etc/rc.local`:
 
 ``` sh
-screen -d -m deptyr -H /tmp/deptyr-rtorrent.socket
+screen -d -m deptyr -s /tmp/deptyr-rtorrent.socket interact
 ```
 
 # Etymology & thanks
