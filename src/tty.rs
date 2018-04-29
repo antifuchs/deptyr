@@ -1,5 +1,5 @@
 use super::FdIo;
-use super::Selectable;
+use super::InputSelectable;
 
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -27,8 +27,8 @@ impl Default for TTY {
     }
 }
 
-impl Selectable for TTY {
-    fn fd(&self) -> RawFd {
+impl InputSelectable for TTY {
+    fn input_fd(&self) -> RawFd {
         self.input.as_raw_fd()
     }
 }

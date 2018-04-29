@@ -1,4 +1,4 @@
-use super::Selectable;
+use super::InputSelectable;
 
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::io;
@@ -32,8 +32,8 @@ impl FdIo {
     }
 }
 
-impl Selectable for FdIo {
-    fn fd(&self) -> RawFd {
+impl InputSelectable for FdIo {
+    fn input_fd(&self) -> RawFd {
         self.as_raw_fd()
     }
 }

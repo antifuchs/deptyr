@@ -75,6 +75,24 @@ fn main() {
     }
 }
 
+/// Implemented for types wrapping raw FDs can be selected (for input).
+pub(crate) trait InputSelectable {
+    /// The input FD for this type.
+    fn input_fd(&self) -> RawFd;
+
+    /// Adds the input FD for this type to the `FdSet` for
+    /// `select`ing.
+    fn add_to_set(&self, set: &mut FdSet) {
+        set.insert(self.input_fd());
+    }
+
+    /// True if the input FD is marked as readable in the `select`
+    /// result.
+    fn is_readable(&self, set: &mut FdSet) -> bool {
+        set.contains(self.input_fd())
+    }
+}
+
 fn interact(socket_path: &str) -> Result<(), Error> {
     let listener = UnixListener::bind(socket_path)?;
     setup_sigwinch_handler()?;
@@ -95,14 +113,6 @@ fn interact(socket_path: &str) -> Result<(), Error> {
 
     remove_file(socket_path)?;
     Ok(())
-}
-
-pub(crate) trait Selectable {
-    fn fd(&self) -> RawFd;
-
-    fn add_to_set(&self, set: &mut FdSet) {
-        set.insert(self.fd());
-    }
 }
 
 /// A no-op, only intended to properly interrupt pselect
@@ -150,12 +160,12 @@ fn interact_with_process(pty: RawFd) -> Result<(), Error> {
                 return Err(e.into());
             }
         }
-        if fd_set.contains(pty.fd()) {
+        if pty.is_readable(&mut fd_set) {
             if proxy_write(&mut buffer, &mut pty, &mut tty)? {
                 return Ok(());
             }
         }
-        if fd_set.contains(tty.fd()) {
+        if tty.is_readable(&mut fd_set) {
             if proxy_write(&mut buffer, &mut tty, &mut pty)? {
                 return Ok(());
             }
