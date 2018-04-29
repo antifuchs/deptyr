@@ -203,7 +203,7 @@ fn setup_pty(socket_path: &str) -> Result<(), Error> {
     let client_pathname = ptsname_r(&controlling_fd).context("ptsname")?; // POSIX calls this the "slave", but no.
 
     // Make a new session & redirect IO to PTY
-    setpgid(Pid::this(), Pid::parent()).context("setpgid")?;
+    setpgid(Pid::from_raw(0), Pid::parent()).context("setpgid")?;
     setsid().context("setsid")?;
     let newstdin = open(Path::new(&client_pathname), OFlag::O_RDONLY, Mode::empty())?;
     dup2(newstdin, stdin().as_raw_fd())?;
