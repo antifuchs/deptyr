@@ -21,7 +21,7 @@ use std::ffi::OsString;
 use std::fs::remove_file;
 use std::io::{stderr, stdin, stdout, Read, Write};
 use std::os::unix::ffi::OsStringExt;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -42,6 +42,8 @@ use nix::sys::select::{pselect, select, FdSet};
 use nix::sys::signal::{sigaction, sigprocmask, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow,
                        Signal};
 use nix::sys::stat::Mode;
+
+use owned_fd::OwnedFd;
 
 use sendfd::UnixSendFd;
 
@@ -107,6 +109,18 @@ struct ListenSocket<'a> {
     listener: UnixListener,
 }
 
+struct ReceivedFd(RawFd);
+
+impl IntoRawFd for ReceivedFd {
+    fn into_raw_fd(self) -> RawFd {
+        self.0
+    }
+}
+
+fn receive_fd(stream: &UnixStream) -> Result<ReceivedFd, Error> {
+    Ok(ReceivedFd(stream.recvfd()?))
+}
+
 impl<'a> Drop for ListenSocket<'a> {
     fn drop(&mut self) {
         drop(&self.listener);
@@ -130,15 +144,16 @@ impl<'a> ListenSocket<'a> {
         })
     }
 
-    fn receive_pty(&self) -> Result<RawFd, Error> {
+    fn receive_pty(&self) -> Result<OwnedFd, Error> {
         let mut fd_set = FdSet::new();
         self.add_to_set(&mut fd_set);
         match select(None, &mut fd_set, None, None, None) {
             Ok(_) => {
                 let (stream, _) = self.listener.accept()?;
-                let pty = stream.recvfd()?;
+                let pty_fd = receive_fd(&stream)?;
                 drop(stream);
-                Ok(pty)
+                let owned = OwnedFd::from(pty_fd);
+                Ok(owned)
             }
             Err(NixError::Sys(Errno::EINTR)) => Err(ListenAbort {})?,
             Err(e) => Err(e.into()),
@@ -196,10 +211,10 @@ fn setup_sigwinch_handler() -> Result<(), Error> {
     Ok(())
 }
 
-fn interact_with_process(pty: RawFd) -> Result<(), Error> {
+fn interact_with_process(pty_fd: OwnedFd) -> Result<(), Error> {
     let mut buffer = vec![0 as u8; 4096];
     let mut tty = TTY::default();
-    let mut pty = FdIo::from_fd(pty);
+    let mut pty = FdIo::from_fd(pty_fd.as_raw_fd());
 
     tty.setup_raw()?;
     tty.resize_pty(pty)?;
