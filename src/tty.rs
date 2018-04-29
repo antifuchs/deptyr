@@ -6,11 +6,15 @@ use std::os::unix::io::{AsRawFd, RawFd};
 
 use failure;
 use libc::{TIOCGWINSZ, TIOCSWINSZ};
+use nix::Error as NixError;
+use nix::errno::Errno;
 use nix::pty::Winsize;
+use nix::sys::termios::{cfmakeraw, tcgetattr, tcsetattr, SetArg, Termios};
 
 pub struct TTY {
     input: FdIo,
     output: FdIo,
+    saved_mode: Option<Termios>,
 }
 
 impl Default for TTY {
@@ -18,6 +22,7 @@ impl Default for TTY {
         TTY {
             input: FdIo::from(io::stdin()),
             output: FdIo::from(io::stdout()),
+            saved_mode: None,
         }
     }
 }
@@ -45,6 +50,40 @@ impl TTY {
             }
         }
         Ok(())
+    }
+
+    pub fn setup_raw(&mut self) -> Result<(), failure::Error> {
+        if self.saved_mode.is_some() {
+            bail!("BUG in deptyr: Attempted to set up TTY more than once.");
+        }
+        let fd = self.input.as_raw_fd();
+        let termios = tcgetattr(fd)?;
+        let mut raw = termios.clone();
+
+        cfmakeraw(&mut raw);
+        tcsetattr(fd, SetArg::TCSANOW, &raw)?;
+        self.saved_mode = Some(termios);
+        Ok(())
+    }
+}
+
+impl Drop for TTY {
+    fn drop(&mut self) {
+        if let Some(ref saved_mode) = self.saved_mode {
+            loop {
+                match tcsetattr(self.input.as_raw_fd(), SetArg::TCSANOW, &saved_mode) {
+                    Ok(()) => {
+                        break;
+                    }
+                    Err(NixError::Sys(Errno::EINTR)) => {
+                        continue;
+                    }
+                    Err(e) => {
+                        panic!("Could not restore terminal mode: {}", e);
+                    }
+                }
+            }
+        }
     }
 }
 

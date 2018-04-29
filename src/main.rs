@@ -33,7 +33,6 @@ use nix::errno::Errno;
 use nix::unistd::{close, execvp, getppid, setpgid, setsid, Pid, dup2};
 use nix::fcntl::{open, OFlag};
 use nix::pty::{grantpt, posix_openpt, ptsname, unlockpt};
-use nix::sys::termios::{cfmakeraw, tcgetattr, tcsetattr, SetArg, Termios};
 use nix::sys::select::{pselect, FdSet};
 use nix::sys::signal::{sigaction, sigprocmask, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow,
                        Signal};
@@ -80,16 +79,13 @@ fn interact(socket_path: &str) -> Result<(), Error> {
     let listener = UnixListener::bind(socket_path)?;
     while let Ok((stream, _)) = listener.accept() {
         let pty = stream.recvfd()?;
-        let rawmode = RawTermios::setup()?;
 
         match interact_with_process(pty) {
             Ok(()) => {
                 drop(stream);
-                rawmode.restore()?;
             }
             Err(e) => {
                 drop(stream);
-                rawmode.restore()?;
                 println!("Encountered error: {}", e);
             }
         }
@@ -97,43 +93,6 @@ fn interact(socket_path: &str) -> Result<(), Error> {
 
     remove_file(socket_path)?;
     Ok(())
-}
-
-struct RawTermios {
-    fd: RawFd,
-    saved: Termios,
-}
-
-impl RawTermios {
-    fn setup() -> Result<RawTermios, Error> {
-        let fd = stdin().as_raw_fd();
-        let termios = tcgetattr(fd)?;
-        let mut raw = termios.clone();
-
-        cfmakeraw(&mut raw);
-        tcsetattr(fd, SetArg::TCSANOW, &raw)?;
-        Ok(RawTermios {
-            fd: fd,
-            saved: termios,
-        })
-    }
-
-    fn restore(&self) -> Result<(), Error> {
-        loop {
-            match tcsetattr(self.fd, SetArg::TCSANOW, &self.saved) {
-                Ok(()) => {
-                    break;
-                }
-                Err(NixError::Sys(Errno::EINTR)) => {
-                    continue;
-                }
-                Err(e) => {
-                    return Err(e.into());
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 pub(crate) trait Selectable {
@@ -170,6 +129,7 @@ fn interact_with_process(pty: RawFd) -> Result<(), Error> {
     );
     unsafe { sigaction(Signal::SIGWINCH, &handler)? };
 
+    tty.setup_raw()?;
     tty.resize_pty(pty)?;
     loop {
         if unsafe { WINCH_HAPPENED } {
