@@ -7,12 +7,16 @@ extern crate nix;
 extern crate owned_fd;
 extern crate sendfd;
 
-mod fd_io;
+pub(crate) mod fd_io;
+mod tty;
+
+use fd_io::FdIo;
+use tty::TTY;
 
 use std::ffi::CString;
 use std::ffi::OsString;
 use std::fs::remove_file;
-use std::io::{stderr, stdin, stdout};
+use std::io::{stderr, stdin, stdout, Read, Write};
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -24,13 +28,11 @@ use clap::{App, Arg, SubCommand};
 
 use failure::Error;
 
-use libc::{TIOCGWINSZ, TIOCSWINSZ};
-
 use nix::Error as NixError;
 use nix::errno::Errno;
-use nix::unistd::{close, execvp, getppid, read, setpgid, setsid, write, Pid, dup2};
+use nix::unistd::{close, execvp, getppid, setpgid, setsid, Pid, dup2};
 use nix::fcntl::{open, OFlag};
-use nix::pty::{grantpt, posix_openpt, ptsname, unlockpt, Winsize};
+use nix::pty::{grantpt, posix_openpt, ptsname, unlockpt};
 use nix::sys::termios::{cfmakeraw, tcgetattr, tcsetattr, SetArg, Termios};
 use nix::sys::select::{pselect, FdSet};
 use nix::sys::signal::{sigaction, sigprocmask, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow,
@@ -134,6 +136,14 @@ impl RawTermios {
     }
 }
 
+pub(crate) trait Selectable {
+    fn fd(&self) -> RawFd;
+
+    fn add_to_set(&self, set: &mut FdSet) {
+        set.insert(self.fd());
+    }
+}
+
 static mut WINCH_HAPPENED: bool = false;
 
 extern "C" fn handle_winch(_: libc::c_int) {
@@ -142,6 +152,9 @@ extern "C" fn handle_winch(_: libc::c_int) {
 
 fn interact_with_process(pty: RawFd) -> Result<(), Error> {
     let mut buffer = vec![0 as u8; 4096];
+    let mut pty = FdIo::from_fd(pty);
+    let mut tty = TTY::default();
+
     let mut normal_mask = SigSet::empty();
     normal_mask.add(Signal::SIGWINCH);
     let select_mask = SigSet::empty();
@@ -157,18 +170,16 @@ fn interact_with_process(pty: RawFd) -> Result<(), Error> {
     );
     unsafe { sigaction(Signal::SIGWINCH, &handler)? };
 
-    let stdin_fd = stdin().as_raw_fd();
-    let stdout_fd = stdout().as_raw_fd();
-
-    resize_pty(pty)?;
+    tty.resize_pty(pty)?;
     loop {
         if unsafe { WINCH_HAPPENED } {
             unsafe { WINCH_HAPPENED = false };
-            resize_pty(pty)?;
+            // TODO: eliminate the unsafe signal handler by doing this in the EINTR branch below.
+            tty.resize_pty(pty)?;
         }
         let mut fd_set = FdSet::new();
-        fd_set.insert(stdin_fd);
-        fd_set.insert(pty);
+        tty.add_to_set(&mut fd_set);
+        pty.add_to_set(&mut fd_set);
         match pselect(None, &mut fd_set, None, None, None, &select_mask) {
             Ok(_) => {}
             Err(NixError::Sys(Errno::EINTR)) => {
@@ -178,80 +189,30 @@ fn interact_with_process(pty: RawFd) -> Result<(), Error> {
                 return Err(e.into());
             }
         }
-        if fd_set.contains(pty) {
-            if proxy_write(&mut buffer, pty, stdout_fd)? {
+        if fd_set.contains(pty.fd()) {
+            if proxy_write(&mut buffer, &mut pty, &mut tty)? {
                 return Ok(());
             }
         }
-        if fd_set.contains(stdin_fd) {
-            if proxy_write(&mut buffer, stdin_fd, pty)? {
+        if fd_set.contains(tty.fd()) {
+            if proxy_write(&mut buffer, &mut tty, &mut pty)? {
                 return Ok(());
             }
         }
     }
 }
 
-fn proxy_write(buffer: &mut [u8], r: RawFd, w: RawFd) -> Result<bool, Error> {
-    let n_read = read(r, buffer)?;
+fn proxy_write<'a, R, W>(buffer: &mut [u8], r: &'a mut R, w: &'a mut W) -> Result<bool, Error>
+where
+    R: Read + Sized,
+    W: Write + Sized,
+{
+    let n_read = r.read(buffer)?;
     if n_read == 0 {
         return Ok(true);
     }
-    let mut offset = 0;
-    while offset < n_read {
-        match write(w, &buffer[offset..n_read]) {
-            Ok(n_written) => {
-                offset += n_written;
-            }
-            Err(NixError::Sys(Errno::EINTR)) => {
-                continue;
-            }
-            Err(e) => {
-                return Err(e.into());
-            }
-        }
-    }
+    w.write_all(&buffer[..n_read])?;
     Ok(false)
-}
-
-ioctl_write_ptr_bad!{unsafe_tty_set_winsize, TIOCSWINSZ, Winsize}
-ioctl_read_bad!{unsafe_tty_get_winsize, TIOCGWINSZ, Winsize}
-
-fn default_winsize() -> Winsize {
-    Winsize {
-        ws_row: 80,
-        ws_col: 30,
-        ws_xpixel: 640,
-        ws_ypixel: 480,
-    }
-}
-
-fn tty_get_winsize(fd: RawFd) -> Result<Winsize, Error> {
-    let mut ws = default_winsize();
-    unsafe {
-        try!(unsafe_tty_get_winsize(fd, &mut ws));
-    }
-    Ok(ws)
-}
-
-fn tty_set_winsize(fd: RawFd, ws: Winsize) -> Result<Winsize, Error> {
-    unsafe {
-        try!(unsafe_tty_set_winsize(fd, &ws));
-    }
-    Ok(ws)
-}
-
-fn resize_pty(fd: RawFd) -> Result<(), Error> {
-    match tty_get_winsize(stdin().as_raw_fd()) {
-        Err(_) => {
-            // We have no tty on stdin - let's still tell the client
-            // it has a "normal"-sized window:
-            try!(tty_set_winsize(fd, default_winsize()));
-        }
-        Ok(ws) => {
-            try!(tty_set_winsize(fd, ws));
-        }
-    }
-    Ok(())
 }
 
 fn try_connect(socket_path: &str) -> UnixStream {
@@ -281,7 +242,7 @@ fn run(socket_path: &str, command: Vec<OsString>) -> Result<(), Error> {
     unlockpt(&controlling_fd)?;
     let client_pathname = unsafe { ptsname(&controlling_fd) }?; // POSIX calls this the "slave", but no.
     let client_fd = open(Path::new(&client_pathname), OFlag::O_RDWR, Mode::empty())?;
-    tty_set_winsize(client_fd, default_winsize())?;
+    tty::set_winsize(client_fd, tty::default_winsize())?;
 
     println!("Running: {:?}", command);
     // Make a new session & redirect IO to PTY
