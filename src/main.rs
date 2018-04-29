@@ -34,7 +34,7 @@ use failure::{Error, ResultExt};
 
 use nix::Error as NixError;
 use nix::errno::Errno;
-use nix::unistd::{close, execvp, setpgid, setsid, Pid, dup2};
+use nix::unistd::{close, execvp, getpgrp, setpgid, setsid, Pid, dup2};
 use nix::fcntl::{open, OFlag};
 use nix::pty::{grantpt, posix_openpt, unlockpt};
 use nix::sys::select::{pselect, FdSet};
@@ -203,8 +203,11 @@ fn setup_pty(socket_path: &str) -> Result<(), Error> {
     let client_pathname = ptsname_r(&controlling_fd).context("ptsname")?; // POSIX calls this the "slave", but no.
 
     // Make a new session & redirect IO to PTY
-    setpgid(Pid::from_raw(0), Pid::parent()).context("setpgid")?;
-    setsid().context("setsid")?;
+    if getpgrp() != Pid::this() {
+        setpgid(Pid::from_raw(0), Pid::parent()).context("setpgid")?;
+        setsid().context("setsid")?;
+    }
+
     let newstdin = open(Path::new(&client_pathname), OFlag::O_RDONLY, Mode::empty())?;
     dup2(newstdin, stdin().as_raw_fd())?;
     tty::set_winsize(stdin().as_raw_fd(), tty::default_winsize()).context("initial setwinsize")?;
