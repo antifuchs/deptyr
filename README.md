@@ -17,9 +17,16 @@ If you run daemontools or another service supervision tool, each of
 # Installation
 
 `deptyr` is written in Rust, and should compile with all versions of
-Rust from 1.23.0 onwards. To build `deptyr`, clone this repo and run
-`cargo build --release` in the root. Once everything is done, you
-should see a binary in `target/release/deptyr`.
+Rust from 1.23.0 onwards. The easiest way, once you have Rust
+installed, is to use cargo:
+
+``` sh
+    cargo install --git https://github.com/antifuchs/deptyr.git deptyr
+```
+
+To build `deptyr` from a checkout, clone this repo and run `cargo
+build --release` in the root. Once everything is done, you should see
+a binary in `target/release/deptyr`.
 
 # Example usage
 
