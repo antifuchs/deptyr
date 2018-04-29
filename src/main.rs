@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use clap::{App, Arg, SubCommand};
 
-use failure::Error;
+use failure::{Error, ResultExt};
 
 use nix::Error as NixError;
 use nix::errno::Errno;
@@ -107,7 +107,8 @@ fn interact(socket_path: &str) -> Result<(), Error> {
     }).expect("Error setting Ctrl-C handler");
 
     setup_sigwinch_handler()?;
-    let listener = ListenSocket::listen(socket_path)?;
+    let listener =
+        ListenSocket::listen(socket_path).context(format!("listening on {:?}", socket_path))?;
 
     while !should_exit.load(Ordering::SeqCst) {
         match listener.receive_pty() {
@@ -215,7 +216,8 @@ fn setup_pty(socket_path: &str) -> Result<(), Error> {
     close(newout)?;
 
     // send controlling end of the pty through the socket:
-    send_control_pty(socket_path, controlling_fd)?;
+    send_control_pty(socket_path, controlling_fd)
+        .context(format!("sending PTY to {:?}", socket_path))?;
     Ok(())
 }
 
