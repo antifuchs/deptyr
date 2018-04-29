@@ -4,7 +4,10 @@ extern crate failure;
 extern crate libc;
 #[macro_use]
 extern crate nix;
+extern crate owned_fd;
 extern crate sendfd;
+
+mod fd_io;
 
 use std::ffi::CString;
 use std::ffi::OsString;
